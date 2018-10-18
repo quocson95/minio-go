@@ -61,10 +61,15 @@ func (c Client) MakeBucket(bucketName string, location string) (err error) {
 		}
 	}
 	// PUT bucket request metadata.
+	header := make(http.Header, 0)
+	header["X-Container-Meta-Access-Control-Allow-Origin"] = []string{"*"}
+	header["X-Container-Meta-Access-Control-Expose-Headers"] = []string{"*"}
 	reqMetadata := requestMetadata{
 		bucketName:     bucketName,
 		bucketLocation: location,
+		customHeader: header,
 	}
+
 
 	// If location is not 'us-east-1' create bucket location config.
 	if location != "us-east-1" && location != "" {
@@ -164,6 +169,87 @@ func (c Client) removeBucketPolicy(bucketName string) error {
 	// using them in http request.
 	urlValues := make(url.Values)
 	urlValues.Set("policy", "")
+
+	// Execute DELETE on objectName.
+	resp, err := c.executeMethod(context.Background(), "DELETE", requestMetadata{
+		bucketName:       bucketName,
+		queryValues:      urlValues,
+		contentSHA256Hex: emptySHA256Hex,
+	})
+	defer closeResponse(resp)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// SetBucketLifecycle set the lifecycle on an existing bucket.
+func (c Client) SetBucketLifecycle(bucketName, lifecycle string) error {
+	// Input validation.
+	if err := s3utils.CheckValidBucketName(bucketName); err != nil {
+		return err
+	}
+
+	// If lifecycle is empty then delete it.
+	if lifecycle == "" {
+		return c.removeBucketLifecycle(bucketName)
+	}
+
+	// Save the updated lifecycle.
+	return c.putBucketLifecycle(bucketName, lifecycle)
+}
+
+// Saves a new bucket lifecycle.
+func (c Client) putBucketLifecycle(bucketName, lifecycle string) error {
+	// Input validation.
+	if err := s3utils.CheckValidBucketName(bucketName); err != nil {
+		return err
+	}
+
+	// Get resources properly escaped and lined up before
+	// using them in http request.
+	urlValues := make(url.Values)
+	urlValues.Set("lifecycle", "")
+
+	// Content-length is mandatory for put lifecycle request
+	lifecycleReader := strings.NewReader(lifecycle)
+	b, err := ioutil.ReadAll(lifecycleReader)
+	if err != nil {
+		return err
+	}
+
+	reqMetadata := requestMetadata{
+		bucketName:       bucketName,
+		queryValues:      urlValues,
+		contentBody:      lifecycleReader,
+		contentLength:    int64(len(b)),
+		contentMD5Base64: sumMD5Base64(b),
+	}
+
+	// Execute PUT to upload a new bucket lifecycle.
+	resp, err := c.executeMethod(context.Background(), "PUT", reqMetadata)
+	defer closeResponse(resp)
+	if err != nil {
+		return err
+	}
+	if resp != nil {
+		if resp.StatusCode != http.StatusOK {
+			return httpRespToErrorResponse(resp, bucketName, "")
+		}
+	}
+	return nil
+}
+
+// Remove lifecycle from a bucket.
+func (c Client) removeBucketLifecycle(bucketName string) error {
+	// Input validation.
+	if err := s3utils.CheckValidBucketName(bucketName); err != nil {
+		return err
+	}
+	// Get resources properly escaped and lined up before
+	// using them in http request.
+	urlValues := make(url.Values)
+	urlValues.Set("lifecycle", "")
 
 	// Execute DELETE on objectName.
 	resp, err := c.executeMethod(context.Background(), "DELETE", requestMetadata{
